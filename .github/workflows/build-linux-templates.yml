@@ -1,0 +1,55 @@
+name: Build Godot Linux templates (encrypted)
+
+# Put this file in your repo at: .github/workflows/build-linux-templates.yml
+# Needs a repository secret named GODOT_KEY (64 hex characters), same as the Android one.
+# Run it from the Actions tab > "Build Godot Linux templates" > Run workflow.
+# When it finishes, download the "linux-templates" artifact (zip) and set
+# Custom Template > Debug / Release in your Linux export preset to the two files.
+
+on:
+  workflow_dispatch:
+
+env:
+  GODOT_TAG: 4.7.2-stable          # must match your editor: 4.7.2.stable
+  SCRIPT_AES256_ENCRYPTION_KEY: ${{ secrets.GODOT_KEY }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check the key
+        run: |
+          if ! echo "$SCRIPT_AES256_ENCRYPTION_KEY" | grep -Eq '^[0-9a-fA-F]{64}$'; then
+            echo "GODOT_KEY secret is missing or is not 64 hex characters"; exit 1
+          fi
+
+      - name: Get Godot source
+        run: git clone --depth 1 --branch "$GODOT_TAG" https://github.com/godotengine/godot.git .
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config \
+            libx11-dev libxcursor-dev libxinerama-dev libxi-dev libxrandr-dev \
+            libgl1-mesa-dev libglu1-mesa-dev libasound2-dev libpulse-dev \
+            libudev-dev libwayland-dev libxkbcommon-dev libdbus-1-dev
+
+      - name: Install scons
+        run: pip install scons
+
+      - name: Build debug template (x86_64)
+        run: scons platform=linuxbsd target=template_debug arch=x86_64 -j4
+
+      - name: Build release template (x86_64)
+        run: scons platform=linuxbsd target=template_release arch=x86_64 -j4
+
+      - name: Strip release binary
+        run: strip bin/godot.linuxbsd.template_release.x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-templates
+          path: |
+            bin/godot.linuxbsd.template_debug.x86_64
+            bin/godot.linuxbsd.template_release.x86_64
