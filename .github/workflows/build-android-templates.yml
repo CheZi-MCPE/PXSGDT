@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Builds Godot Android export templates (arm64) with an encryption key.
+# Ubuntu / Debian. Run as a normal user with sudo:   bash build-android-templates.sh
+# Optional: GODOT_TAG=4.7.2-stable  NDK_VERSION=...  GODOT_KEY=<64 hex>  (otherwise it asks / detects)
+set -euo pipefail
+
+GODOT_TAG="${GODOT_TAG:-4.7.2-stable}"        # must match your editor: 4.7.2.stable
+WORK="$HOME/godot-build"
+SDK="$WORK/android-sdk"
+
+# ---- key ----
+if [ -z "${GODOT_KEY:-}" ]; then
+  read -rsp "Encryption key (64 hex chars, empty = generate one): " GODOT_KEY; echo
+fi
+if [ -z "$GODOT_KEY" ]; then
+  GODOT_KEY="$(openssl rand -hex 32)"
+  echo "Generated key (SAVE IT, you need the same key in the export preset and for every pack):"
+  echo "$GODOT_KEY"
+fi
+if ! [[ "$GODOT_KEY" =~ ^[0-9a-fA-F]{64}$ ]]; then echo "Key must be 64 hex characters"; exit 1; fi
+export SCRIPT_AES256_ENCRYPTION_KEY="$GODOT_KEY"
+
+# ---- packages ----
+sudo apt-get update
+sudo apt-get install -y git curl unzip openjdk-17-jdk python3 python3-venv build-essential pkg-config
+mkdir -p "$WORK"
+python3 -m venv "$WORK/venv"
+"$WORK/venv/bin/pip" install -q scons
+export PATH="$WORK/venv/bin:$PATH"
+export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(which javac)")")")"
+
+# ---- Godot source ----
+if [ ! -d "$WORK/godot" ]; then
+  git clone --depth 1 --branch "$GODOT_TAG" https://github.com/godotengine/godot.git "$WORK/godot"
+fi
+cd "$WORK/godot"
+
+# ---- Android SDK ----
+if [ ! -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+  mkdir -p "$SDK/cmdline-tools"
+  curl -fL -o "$WORK/cmdtools.zip" https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+  unzip -q "$WORK/cmdtools.zip" -d "$SDK/cmdline-tools"
+  mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
+fi
+export ANDROID_HOME="$SDK"
+SM="$SDK/cmdline-tools/latest/bin/sdkmanager"
+
+# NDK version this Godot expects (read from its source; override with NDK_VERSION=...)
+NDK_VERSION="${NDK_VERSION:-$(grep -rhoE 'ndk_version[^=]*=\s*"[0-9.]+"|return "[0-9]+\.[0-9]+\.[0-9]+"' platform/android/*.py | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)}"
+echo "NDK: $NDK_VERSION"
+yes | "$SM" --licenses > /dev/null || true
+"$SM" "platform-tools" "build-tools;34.0.0" "platforms;android-34" "cmake;3.10.2.4988404" "ndk;$NDK_VERSION"
+export ANDROID_NDK_ROOT="$SDK/ndk/$NDK_VERSION"
+
+# ---- build ----
+JOBS="$(nproc)"; [ "$JOBS" -gt 4 ] && JOBS=4     # keep RAM use reasonable
+scons platform=android target=template_debug   arch=arm64 -j"$JOBS"
+scons platform=android target=template_release arch=arm64 -j"$JOBS"
+(cd platform/android/java && ./gradlew generateGodotTemplates)
+
+OUT="$HOME/android-templates"
+mkdir -p "$OUT"
+cp bin/android_debug.apk bin/android_release.apk "$OUT/"
+echo
+echo "Done. Templates are in $OUT"
+echo "Download them to your phone (scp / sftp) and set them as Custom Template Debug / Release."
