@@ -37,10 +37,10 @@ jobs:
         run: pip install scons
 
       - name: Build debug template (x86_64)
-        run: scons platform=windows target=template_debug arch=x86_64 -j4
+        run: scons platform=windows target=template_debug arch=x86_64 accesskit=no d3d12=no -j4
 
       - name: Build release template (x86_64)
-        run: scons platform=windows target=template_release arch=x86_64 -j4
+        run: scons platform=windows target=template_release arch=x86_64 accesskit=no d3d12=no -j4
 
       - uses: actions/upload-artifact@v4
         with:
